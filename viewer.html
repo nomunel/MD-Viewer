@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Markdown Viewer</title>
+  <script src="./src/mermaid.min.js"></script>
+  <link rel="stylesheet" href="./src/main.css">
+</head>
+<body>
+  <div id="toast" class="toast" hidden></div>
+  <header class="app-header">
+    <div class="brand">
+      <h1 class="brand-title"><button id="brandHomeButton" class="brand-title-button" type="button">Markdown 文書</button></h1>
+      <div id="brandSubtitle" class="brand-subtitle">フォルダを選択して Markdown を閲覧</div>
+    </div>
+    <div class="top-actions">
+      <div class="project-menu">
+        <button id="projectMenuButton" class="button" type="button" aria-expanded="false" aria-controls="projectDropdown">Project一覧</button>
+        <div id="projectDropdown" class="project-dropdown" hidden>
+          <div id="projectList" class="project-list"></div>
+          <button id="chooseFolderButton" class="button" type="button">新規フォルダ選択</button>
+        </div>
+      </div>
+      <button id="reloadButton" class="button" type="button">再読込</button>
+      <button id="themeButton" class="button" type="button">テーマ</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar" aria-label="ページ一覧">
+      <div class="sidebar-tools">
+        <div class="search-row">
+          <input id="pageSearch" class="search-input" type="search" placeholder="簡易検索 / フィルタ (Ctrl+K)" autocomplete="off">
+          <button id="searchButton" class="button" type="button">検索</button>
+        </div>
+        <div class="tree-actions" aria-label="ページ一覧の開閉">
+          <button id="expandTreeButton" class="tree-action-button" type="button" title="全開" aria-label="全開">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.5 4.5h6.2l2.2 2.8h8.6v12.2h-17z"></path>
+              <path d="M8 14h8"></path>
+              <path d="M12 10v8"></path>
+            </svg>
+          </button>
+          <button id="collapseTreeButton" class="tree-action-button" type="button" title="全閉" aria-label="全閉">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.5 4.5h6.2l2.2 2.8h8.6v12.2h-17z"></path>
+              <path d="M8 14h8"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <nav id="navTree" class="nav-tree"></nav>
+    </aside>
+    <div id="resizer" class="resizer" aria-hidden="true"></div>
+    <section class="viewer" aria-label="Markdownプレビュー">
+      <div class="viewer-toolbar">
+        <div class="breadcrumb-wrap">
+          <div id="breadcrumb" class="breadcrumb">README.md</div>
+          <button id="copyPathButton" class="icon-button" type="button" title="パスをコピー" aria-label="パスをコピー">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="viewer-actions">
+          <select id="editorSelect" class="select" aria-label="開くエディタ">
+            <option value="vscode">VS Code</option>
+            <option value="cursor">Cursor</option>
+            <option value="windsurf">Windsurf</option>
+          </select>
+          <button id="openEditorButton" class="button" type="button">開く</button>
+        </div>
+      </div>
+      <div id="contentScroll" class="content-scroll">
+        <article id="markdownBody" class="markdown-body"></article>
+      </div>
+      <button id="topButton" class="top-floating" type="button" aria-label="先頭へ">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 19V5"></path>
+          <path d="M6.5 10.5 12 5l5.5 5.5"></path>
+        </svg>
+      </button>
+    </section>
+  </main>
+
+  <script src="./src/main.js"></script>
+</body>
+</html>
