@@ -3,12 +3,12 @@
 
   const STORAGE = {
     activePath: "markdownDocsPreview.activePath",
-    activeProjectId: "markdownDocsPreview.activeProjectId",
+    activeDocumentId: "markdownDocsPreview.activeDocumentId",
     editorProduct: "markdownDocsPreview.editorProduct",
     openFolders: "markdownDocsPreview.openFolders",
     sidebarWidth: "markdownDocsPreview.sidebarWidth",
     theme: "markdownDocsPreview.theme",
-    projects: "projects"
+    documents: "documents"
   };
 
   const DB = {
@@ -46,9 +46,9 @@
     searchButton: document.getElementById("searchButton"),
     expandTreeButton: document.getElementById("expandTreeButton"),
     collapseTreeButton: document.getElementById("collapseTreeButton"),
-    projectMenuButton: document.getElementById("projectMenuButton"),
-    projectDropdown: document.getElementById("projectDropdown"),
-    projectList: document.getElementById("projectList"),
+    documentMenuButton: document.getElementById("documentMenuButton"),
+    documentDropdown: document.getElementById("documentDropdown"),
+    documentList: document.getElementById("documentList"),
     chooseFolderButton: document.getElementById("chooseFolderButton"),
     reloadButton: document.getElementById("reloadButton"),
     themeButton: document.getElementById("themeButton"),
@@ -67,8 +67,8 @@
   let rootDirectoryHandle = null;
   let rootDisplayName = "Markdown 文書";
   let rootReadmeTitle = "";
-  let activeProjectId = initialRoute.projectId || sessionStorage.getItem(STORAGE.activeProjectId) || localStorage.getItem(STORAGE.activeProjectId) || "";
-  let projectHistory = [];
+  let activeDocumentId = initialRoute.documentId || sessionStorage.getItem(STORAGE.activeDocumentId) || localStorage.getItem(STORAGE.activeDocumentId) || "";
+  let documentHistory = [];
   let objectUrls = [];
   let toastTimer = 0;
 
@@ -91,27 +91,27 @@
     }
 
     bindEvents();
-    await loadProjectHistory();
+    await loadDocumentHistory();
     updateEnvironmentHints();
     await refreshIndexAndLoad();
   }
 
   function updateEnvironmentHints() {
     elements.chooseFolderButton.hidden = !supportsFileSystemAccess();
-    elements.projectMenuButton.hidden = !supportsFileSystemAccess();
-    elements.projectMenuButton.classList.toggle("is-callout", !rootDirectoryHandle);
+    elements.documentMenuButton.hidden = !supportsFileSystemAccess();
+    elements.documentMenuButton.classList.toggle("is-callout", !rootDirectoryHandle);
     elements.brandHomeButton.textContent = rootReadmeTitle || rootDisplayName || "Markdown 文書";
     elements.brandSubtitle.textContent = rootDirectoryHandle
-      ? `${activeProjectDisplayPath()} / ${docs.length || 0}ページ`
-      : "Project一覧から Markdown フォルダを選択";
+      ? `${activeDocumentDisplayPath()} / ${docs.length || 0}ページ`
+      : "Markdown フォルダ未選択";
     updateDocumentTitle();
-    renderProjectList();
+    renderDocumentList();
   }
 
   function updateDocumentTitle() {
-    const projectTitle = rootReadmeTitle || rootDisplayName || "";
-    document.title = projectTitle && rootDirectoryHandle
-      ? `${projectTitle} - Markdown Viewer`
+    const documentTitle = rootReadmeTitle || rootDisplayName || "";
+    document.title = documentTitle && rootDirectoryHandle
+      ? `${documentTitle} - Markdown Viewer`
       : "Markdown Viewer";
   }
 
@@ -127,7 +127,7 @@
     elements.expandTreeButton.addEventListener("click", expandAllFolders);
     elements.collapseTreeButton.addEventListener("click", collapseAllFolders);
     elements.reloadButton.addEventListener("click", refreshIndexAndLoad);
-    elements.projectMenuButton.addEventListener("click", toggleProjectDropdown);
+    elements.documentMenuButton.addEventListener("click", toggleDocumentDropdown);
     elements.chooseFolderButton.addEventListener("click", chooseMarkdownFolder);
     elements.themeButton.addEventListener("click", () => {
       toggleTheme();
@@ -145,10 +145,10 @@
     elements.contentScroll.addEventListener("scroll", updateTopButtonVisibility, { passive: true });
     window.addEventListener("popstate", async (event) => {
       const route = readHistoryRouteFromState(event.state);
-      if (route.projectId && route.projectId !== activeProjectId && projectHistory.some((project) => project.id === route.projectId)) {
+      if (route.documentId && route.documentId !== activeDocumentId && documentHistory.some((documentItem) => documentItem.id === route.documentId)) {
         activePath = route.path || README_PATH;
         pendingHash = route.hash;
-        await openProjectFromHistory(route.projectId, { refresh: false });
+        await openDocumentFromHistory(route.documentId, { refresh: false });
         await refreshIndexAndLoad();
         return;
       }
@@ -158,9 +158,9 @@
     });
 
     document.addEventListener("click", (event) => {
-      if (elements.projectDropdown.hidden) return;
-      if (elements.projectDropdown.contains(event.target) || elements.projectMenuButton.contains(event.target)) return;
-      closeProjectDropdown();
+      if (elements.documentDropdown.hidden) return;
+      if (elements.documentDropdown.contains(event.target) || elements.documentMenuButton.contains(event.target)) return;
+      closeDocumentDropdown();
     });
 
     document.addEventListener("keydown", (event) => {
@@ -204,66 +204,72 @@
     localStorage.setItem(STORAGE.openFolders, JSON.stringify(Array.from(openFolders).sort((a, b) => a.localeCompare(b, "ja"))));
   }
 
-  function toggleProjectDropdown() {
-    const nextHidden = !elements.projectDropdown.hidden;
-    elements.projectDropdown.hidden = nextHidden;
-    elements.projectMenuButton.setAttribute("aria-expanded", String(!nextHidden));
-    if (!nextHidden) renderProjectList();
+  function toggleDocumentDropdown() {
+    const nextHidden = !elements.documentDropdown.hidden;
+    elements.documentDropdown.hidden = nextHidden;
+    elements.documentMenuButton.setAttribute("aria-expanded", String(!nextHidden));
+    if (!nextHidden) renderDocumentList();
   }
 
-  function closeProjectDropdown() {
-    elements.projectDropdown.hidden = true;
-    elements.projectMenuButton.setAttribute("aria-expanded", "false");
+  function openDocumentDropdown() {
+    elements.documentDropdown.hidden = false;
+    elements.documentMenuButton.setAttribute("aria-expanded", "true");
+    renderDocumentList();
   }
 
-  function renderProjectList() {
-    if (!elements.projectList) return;
+  function closeDocumentDropdown() {
+    elements.documentDropdown.hidden = true;
+    elements.documentMenuButton.setAttribute("aria-expanded", "false");
+  }
 
-    const items = projectHistory.map((project) => {
-      const active = project.id === activeProjectId ? " active" : "";
-      const projectName = project.name || project.folderName || "Markdown 文書";
-      const projectPath = projectDisplayPath(project);
-      const projectDate = project.lastOpenedAt ? formatProjectDate(project.lastOpenedAt) : "履歴";
+  function renderDocumentList() {
+    if (!elements.documentList) return;
+
+    const items = documentHistory.map((documentItem) => {
+      const active = documentItem.id === activeDocumentId ? " active" : "";
+      const documentName = documentItem.name || documentItem.folderName || "Markdown 文書";
+      const documentPath = documentDisplayPath(documentItem);
+      const documentDate = documentItem.lastOpenedAt ? formatDocumentDate(documentItem.lastOpenedAt) : "履歴";
       return `
-        <div class="project-item">
-          <button class="project-open${active}" type="button" data-project-id="${escapeAttr(project.id)}">
-            <span class="project-name">${escapeHtml(projectName)}</span>
-            <span class="project-meta">
-              <span class="project-path">${escapeHtml(projectPath)}</span>
-              <span class="project-date">${escapeHtml(projectDate)}</span>
+        <div class="document-item">
+          <button class="document-open${active}" type="button" data-document-id="${escapeAttr(documentItem.id)}">
+            <span class="document-name">${escapeHtml(documentName)}</span>
+            <span class="document-meta">
+              <span class="document-path">${escapeHtml(documentPath)}</span>
+              <span class="document-date">${escapeHtml(documentDate)}</span>
             </span>
           </button>
-          <button class="project-remove" type="button" data-remove-project-id="${escapeAttr(project.id)}" aria-label="${escapeAttr(projectName)} を履歴から削除">×</button>
+          <button class="document-remove" type="button" data-remove-document-id="${escapeAttr(documentItem.id)}" aria-label="${escapeAttr(documentName)} を履歴から削除">×</button>
         </div>`;
     }).join("");
 
-    elements.projectList.innerHTML = items || '<div class="empty-state">履歴はまだありません。</div>';
+    elements.documentList.innerHTML = items || '<div class="empty-state">履歴はまだありません。</div>';
 
-    elements.projectList.querySelectorAll("[data-project-id]").forEach((button) => {
-      button.addEventListener("click", () => openProjectFromHistory(button.dataset.projectId, { resetToReadme: true }));
+    elements.documentList.querySelectorAll("[data-document-id]").forEach((button) => {
+      button.addEventListener("click", () => openDocumentFromHistory(button.dataset.documentId, { resetToReadme: true }));
     });
-    elements.projectList.querySelectorAll("[data-remove-project-id]").forEach((button) => {
+    elements.documentList.querySelectorAll("[data-remove-document-id]").forEach((button) => {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        removeProjectFromHistory(button.dataset.removeProjectId);
+        removeDocumentFromHistory(button.dataset.removeDocumentId);
       });
     });
   }
 
-  function formatProjectDate(value) {
+  function formatDocumentDate(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  function activeProjectDisplayPath() {
-    return projectDisplayPath(projectHistory.find((project) => project.id === activeProjectId)) || rootDisplayName || "Markdown 文書";
+  function activeDocumentDisplayPath() {
+    return documentDisplayPath(documentHistory.find((documentItem) => documentItem.id === activeDocumentId)) || rootDisplayName || "Markdown 文書";
   }
 
-  function projectDisplayPath(project) {
-    if (!project) return rootDisplayName || "";
-    const editorRootPath = project.editorRootPaths && project.editorRootPaths[selectedEditorId()];
-    return editorRootPath || project.folderName || project.handle?.name || project.name || "";
+  function documentDisplayPath(documentItem) {
+    if (!documentItem) return rootDisplayName || "";
+    const editorRootPath = documentItem.editorRootPaths && documentItem.editorRootPaths[selectedEditorId()];
+    return editorRootPath || documentItem.folderName || documentItem.handle?.name || documentItem.name || "";
   }
 
   function bindResizer() {
@@ -297,6 +303,7 @@
     showToast("Markdown一覧を読み込み中...");
     try {
       const paths = await loadMarkdownIndex();
+      setDocumentUnavailableMode(false);
       docs = await Promise.all(paths.map(async (path) => ({ path, title: await loadDocTitle(path) })));
       docs.sort(compareDocs);
       rootReadmeTitle = await loadRootReadmeTitle();
@@ -314,10 +321,19 @@
       renderTree();
       await loadDoc(activePath, { hash: pendingHash, history: "replace" });
     } catch (error) {
+      setDocumentUnavailableMode(true);
       updateEnvironmentHints();
       renderTree();
       renderLoadError(error);
     }
+  }
+
+  function setDocumentUnavailableMode(enabled) {
+    document.body.classList.toggle("is-document-unavailable", Boolean(enabled));
+    document.querySelectorAll(".sidebar-tools input, .sidebar-tools button, .sidebar-tools select")
+      .forEach((control) => {
+        control.disabled = Boolean(enabled);
+      });
   }
 
   async function loadMarkdownIndex() {
@@ -331,13 +347,14 @@
       return;
     }
 
-    const activeProject = projectHistory.find((project) => project.id === activeProjectId) || projectHistory[0];
-    if (activeProject) {
-      await openProjectFromHistory(activeProject.id, { refresh: false });
-      if (rootDirectoryHandle) return;
+    const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId) || documentHistory[0];
+    if (activeDocument) {
+      await setActiveDocument(activeDocument);
+      await verifyDirectoryPermission(rootDirectoryHandle);
+      return;
     }
 
-    throw new Error("Markdown フォルダが未選択です。上部の「Project一覧」から対象フォルダを選んでください。");
+    throw new Error("Markdown 文書フォルダが未選択です。上部の「ドキュメント一覧」または↓のボタンから対象フォルダを選んでください。");
   }
 
   async function chooseMarkdownFolder() {
@@ -352,19 +369,19 @@
         mode: "read"
       });
       await verifyDirectoryPermission(handle);
-      const existingProject = await findProjectForHandle(handle);
+      const existingDocument = await findDocumentForHandle(handle);
       const fallbackName = handle.name || "Markdown 文書";
-      const projectTitle = await loadRootReadmeTitleFromHandle(handle, fallbackName);
-      await setActiveProject({
-        ...(existingProject || {}),
-        id: existingProject ? existingProject.id : createProjectId(),
-        name: projectTitle,
+      const documentTitle = await loadRootReadmeTitleFromHandle(handle, fallbackName);
+      await setActiveDocument({
+        ...(existingDocument || {}),
+        id: existingDocument ? existingDocument.id : createDocumentId(),
+        name: documentTitle,
         folderName: fallbackName,
         handle,
         lastOpenedAt: new Date().toISOString()
       }, { resetToReadme: true });
       pendingHash = "";
-      closeProjectDropdown();
+      closeDocumentDropdown();
       await refreshIndexAndLoad();
     } catch (error) {
       if (error && error.name === "AbortError") return;
@@ -372,11 +389,11 @@
     }
   }
 
-  async function findProjectForHandle(handle) {
+  async function findDocumentForHandle(handle) {
     if (!handle || typeof handle.isSameEntry !== "function") return null;
-    for (const project of projectHistory) {
+    for (const documentItem of documentHistory) {
       try {
-        if (project.handle && await handle.isSameEntry(project.handle)) return project;
+        if (documentItem.handle && await handle.isSameEntry(documentItem.handle)) return documentItem;
       } catch {
         // Ignore stale handles and keep scanning the rest of the history.
       }
@@ -384,33 +401,42 @@
     return null;
   }
 
-  async function openProjectFromHistory(projectId, options = {}) {
-    const project = projectHistory.find((item) => item.id === projectId);
-    if (!project) return;
+  async function openDocumentFromHistory(documentId, options = {}) {
+    const documentItem = documentHistory.find((item) => item.id === documentId);
+    if (!documentItem) return;
 
     try {
-      await verifyDirectoryPermission(project.handle);
-      const fallbackName = project.folderName || project.name || "Markdown 文書";
-      const projectTitle = await loadRootReadmeTitleFromHandle(project.handle, fallbackName);
-      await setActiveProject({
-        ...project,
-        name: projectTitle,
-        folderName: project.folderName || project.handle.name || project.name || "Markdown 文書",
+      await setActiveDocument({
+        ...documentItem,
         lastOpenedAt: new Date().toISOString()
       }, { resetToReadme: options.resetToReadme === true });
-      closeProjectDropdown();
+      await verifyDirectoryPermission(documentItem.handle);
+      const fallbackName = documentItem.folderName || documentItem.name || "Markdown 文書";
+      const documentTitle = await loadRootReadmeTitleFromHandle(documentItem.handle, fallbackName);
+      await setActiveDocument({
+        ...documentItem,
+        name: documentTitle,
+        folderName: documentItem.folderName || documentItem.handle.name || documentItem.name || "Markdown 文書",
+        lastOpenedAt: new Date().toISOString()
+      }, { resetToReadme: options.resetToReadme === true });
+      closeDocumentDropdown();
       if (options.refresh !== false) await refreshIndexAndLoad();
     } catch (error) {
-      showToast(`${project.name || "Project"} を開けませんでした。履歴から削除して選び直してください`, "error", 5000);
+      if (isHandleReferenceError(error)) {
+        await removeDocumentFromHistory(documentId, { silent: true });
+        showToast(`${documentItem.name || "ドキュメント"} を参照できなかったため、履歴から削除しました`, "error", 5000);
+        return;
+      }
+      showToast(`${documentItem.name || "ドキュメント"} を開けませんでした。権限を確認して開き直してください`, "error", 5000);
     }
   }
 
-  async function setActiveProject(project, options = {}) {
-    rootDirectoryHandle = project.handle;
-    rootDisplayName = project.folderName || project.handle?.name || project.name || "Markdown 文書";
-    rootReadmeTitle = project.name || rootDisplayName;
-    activeProjectId = project.id;
-    sessionStorage.setItem(STORAGE.activeProjectId, activeProjectId);
+  async function setActiveDocument(documentItem, options = {}) {
+    rootDirectoryHandle = documentItem.handle;
+    rootDisplayName = documentItem.folderName || documentItem.handle?.name || documentItem.name || "Markdown 文書";
+    rootReadmeTitle = documentItem.name || rootDisplayName;
+    activeDocumentId = documentItem.id;
+    sessionStorage.setItem(STORAGE.activeDocumentId, activeDocumentId);
     if (options.resetToReadme) {
       activePath = README_PATH;
       pendingHash = "";
@@ -418,33 +444,35 @@
     }
 
     const nextHistory = [
-      project,
-      ...projectHistory.filter((item) => item.id !== project.id)
+      documentItem,
+      ...documentHistory.filter((item) => item.id !== documentItem.id)
     ].slice(0, 12);
-    projectHistory = nextHistory;
-    await storeProjectHistory();
+    documentHistory = nextHistory;
+    await storeDocumentHistory();
     updateEnvironmentHints();
   }
 
-  async function removeProjectFromHistory(projectId) {
-    projectHistory = projectHistory.filter((project) => project.id !== projectId);
-    await storeProjectHistory();
-    if (activeProjectId === projectId) {
-      activeProjectId = "";
+  async function removeDocumentFromHistory(documentId, options = {}) {
+    documentHistory = documentHistory.filter((documentItem) => documentItem.id !== documentId);
+    await storeDocumentHistory();
+    if (activeDocumentId === documentId) {
+      activeDocumentId = "";
       rootDirectoryHandle = null;
       rootDisplayName = "Markdown 文書";
       rootReadmeTitle = "";
       docs = [];
-      sessionStorage.removeItem(STORAGE.activeProjectId);
+      sessionStorage.removeItem(STORAGE.activeDocumentId);
       elements.navTree.innerHTML = "";
-      elements.markdownBody.innerHTML = '<div class="empty-state">Project一覧から Markdown フォルダを選んでください。</div>';
+      elements.markdownBody.innerHTML = '<div class="empty-state">ドキュメント一覧から Markdown フォルダを選んでください。</div>';
+      setDocumentUnavailableMode(true);
     }
     updateEnvironmentHints();
+    if (!options.silent) showToast("ドキュメント履歴から削除しました", "info", 3000);
   }
 
-  function createProjectId() {
+  function createDocumentId() {
     if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-    return `project-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `document-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
   async function verifyDirectoryPermission(handle) {
@@ -452,6 +480,11 @@
     if (handle.queryPermission && await handle.queryPermission(options) === "granted") return;
     if (handle.requestPermission && await handle.requestPermission(options) === "granted") return;
     throw new Error("選択フォルダの読み取り許可がありません。");
+  }
+
+  function isHandleReferenceError(error) {
+    const name = error && error.name ? String(error.name) : "";
+    return name === "NotFoundError";
   }
 
   async function indexDirectoryMarkdownFiles(directoryHandle, basePath = "") {
@@ -553,14 +586,42 @@
   function renderLoadError(error) {
     const message = error && error.message ? error.message : String(error);
     const folderButton = supportsFileSystemAccess()
-      ? '<p><button class="button" type="button" data-choose-folder>Markdown フォルダを選択</button></p>'
+      ? '<p><button class="button" type="button" data-choose-folder>新規フォルダ選択</button></p>'
       : '<p>このブラウザは File System Access API に対応していません。Chrome または Edge で開いてください。</p>';
+    const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId);
+    if (!documentHistory.length) {
+      elements.markdownBody.innerHTML = `
+        <div class="empty-state">
+          <h2>ドキュメントのフォルダを選択してください</h2>
+          ${folderButton}
+          <p>ドキュメントは、画面右上の「ドキュメント一覧」に追加されます。</p>
+        </div>`;
+      elements.markdownBody.querySelector("[data-choose-folder]")?.addEventListener("click", chooseMarkdownFolder);
+      hideToast();
+      return;
+    }
+
+    if (activeDocument) {
+      openDocumentDropdown();
+      elements.markdownBody.innerHTML = `
+        <div class="empty-state">
+          <h2>${escapeHtml(activeDocument.name || activeDocument.folderName || "ドキュメント")} に再接続してください</h2>
+          <p>ブラウザを開き直したため、ドキュメントフォルダの読み取り権限を再確認する必要があります。</p>
+          <p><button class="button" type="button" data-reconnect-document>再接続</button></p>
+        </div>`;
+      elements.markdownBody.querySelector("[data-reconnect-document]")?.addEventListener("click", () => {
+        openDocumentFromHistory(activeDocument.id, { refresh: true });
+      });
+      hideToast();
+      return;
+    }
+
     elements.markdownBody.innerHTML = `
       <div class="empty-state">
         <h2>Markdown を読み込めませんでした</h2>
         <p>${escapeHtml(message)}</p>
         ${folderButton}
-        <p>一度開いたドキュメントフォルダはProject一覧に追加され、次回から Project一覧の履歴から再利用できます。</p>
+        <p>ドキュメントPathの変更があった場合は、改めて md ドキュメントのルートフォルダを選択してください。</p>
       </div>`;
     elements.markdownBody.querySelector("[data-choose-folder]")?.addEventListener("click", chooseMarkdownFolder);
     showToast("Markdown 一覧を取得できませんでした", "error", 5000);
@@ -1132,7 +1193,7 @@
 
     const normalizedPath = normalizePath(path || "README.md");
     const normalizedHash = normalizeHistoryHash(hash);
-    const state = { docPath: normalizedPath, hash: normalizedHash, projectId: activeProjectId || "" };
+    const state = { docPath: normalizedPath, hash: normalizedHash, documentId: activeDocumentId || "" };
     const url = buildHistoryUrl(normalizedPath, normalizedHash);
 
     if (mode === "replace" || isCurrentHistoryRoute(normalizedPath, normalizedHash)) {
@@ -1147,7 +1208,7 @@
       return {
         path: normalizePath(state.docPath),
         hash: normalizeHistoryHash(state.hash),
-        projectId: normalizeProjectId(state.projectId)
+        documentId: normalizeDocumentId(state.documentId)
       };
     }
 
@@ -1159,15 +1220,15 @@
     return {
       path: normalizePath(params.get("doc") || ""),
       hash: normalizeHistoryHash(location.hash),
-      projectId: normalizeProjectId(params.get("project") || "")
+      documentId: normalizeDocumentId(params.get("document") || "")
     };
   }
 
   function buildHistoryUrl(path, hash) {
     const url = new URL(location.href);
     url.searchParams.set("doc", normalizePath(path || "README.md"));
-    if (activeProjectId) url.searchParams.set("project", activeProjectId);
-    else url.searchParams.delete("project");
+    if (activeDocumentId) url.searchParams.set("document", activeDocumentId);
+    else url.searchParams.delete("document");
     const normalizedHash = normalizeHistoryHash(hash);
     url.hash = normalizedHash ? encodeURIComponent(decodeHashSafely(normalizedHash)) : "";
     return `${url.pathname}${url.search}${url.hash}`;
@@ -1177,15 +1238,15 @@
     const current = readHistoryRouteFromLocation();
     return normalizePath(current.path) === normalizePath(path)
       && normalizeHistoryHash(current.hash) === normalizeHistoryHash(hash)
-      && normalizeProjectId(current.projectId) === normalizeProjectId(activeProjectId);
+      && normalizeDocumentId(current.documentId) === normalizeDocumentId(activeDocumentId);
   }
 
   function normalizeHistoryHash(hash) {
     return String(hash || "").replace(/^#/, "");
   }
 
-  function normalizeProjectId(projectId) {
-    return String(projectId || "").trim();
+  function normalizeDocumentId(documentId) {
+    return String(documentId || "").trim();
   }
 
   function decodeHashSafely(hash) {
@@ -1253,7 +1314,7 @@
   }
 
   async function openActivePathInEditor() {
-    if (!rootDirectoryHandle || !activeProjectId || !docs.some((doc) => doc.path === activePath)) {
+    if (!rootDirectoryHandle || !activeDocumentId || !docs.some((doc) => doc.path === activePath)) {
       showToast("開く対象のページがありません", "error", 5000);
       return;
     }
@@ -1269,10 +1330,10 @@
   }
 
   async function ensureEditorRootPath(editorId) {
-    const project = projectHistory.find((item) => item.id === activeProjectId);
-    if (!project) return "";
+    const documentItem = documentHistory.find((item) => item.id === activeDocumentId);
+    if (!documentItem) return "";
 
-    const current = project.editorRootPaths && project.editorRootPaths[editorId];
+    const current = documentItem.editorRootPaths && documentItem.editorRootPaths[editorId];
     if (current) return current;
 
     const editor = EDITORS[editorId] || EDITORS.vscode;
@@ -1285,15 +1346,15 @@
       return "";
     }
 
-    project.editorRootPaths = {
-      ...(project.editorRootPaths || {}),
+    documentItem.editorRootPaths = {
+      ...(documentItem.editorRootPaths || {}),
       [editorId]: rootPath
     };
-    projectHistory = [
-      project,
-      ...projectHistory.filter((item) => item.id !== project.id)
+    documentHistory = [
+      documentItem,
+      ...documentHistory.filter((item) => item.id !== documentItem.id)
     ];
-    await storeProjectHistory();
+    await storeDocumentHistory();
     updateEnvironmentHints();
     showToast(`${editor.label} 用のPathを保存しました`, "info", 3000);
     return rootPath;
@@ -1301,9 +1362,9 @@
 
   function editorRootPathPromptMessage(editorId) {
     const editor = EDITORS[editorId] || EDITORS.vscode;
-    const example = `${rootDisplayName || "project-docs"}`;
+    const example = `${rootDisplayName || "document-docs"}`;
     return `${editor.label} で開くため、初回だけドキュメントルートの絶対Pathを入力してください。\n\n` +
-      `例: D:\\Projects\\Example\\${example.replace(/\//g, "\\")}\n`;
+      `例: D:\\Documents\\Example\\${example.replace(/\//g, "\\")}\n`;
   }
 
   function selectedEditorId() {
@@ -1362,19 +1423,19 @@
     return typeof window.showDirectoryPicker === "function" && typeof indexedDB !== "undefined";
   }
 
-  async function loadProjectHistory() {
+  async function loadDocumentHistory() {
     if (!supportsFileSystemAccess()) {
-      projectHistory = [];
+      documentHistory = [];
       return;
     }
 
-    const stored = await readFromHandleStore(STORAGE.projects);
-    projectHistory = Array.isArray(stored) ? stored.filter((project) => project && project.id && project.handle) : [];
+    const stored = await readFromHandleStore(STORAGE.documents);
+    documentHistory = Array.isArray(stored) ? stored.filter((documentItem) => documentItem && documentItem.id && documentItem.handle) : [];
   }
 
-  async function storeProjectHistory() {
+  async function storeDocumentHistory() {
     if (!supportsFileSystemAccess()) return;
-    await writeToHandleStore(STORAGE.projects, projectHistory);
+    await writeToHandleStore(STORAGE.documents, documentHistory);
   }
 
   function openHandleStore(mode) {

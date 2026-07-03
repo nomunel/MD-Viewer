@@ -1,12 +1,12 @@
 # ドキュメント作成ガイド
 
-このガイドは、Markdown Viewer で読みやすい Project 文書を作成する人向けの指針です。
+このガイドは、Markdown Viewer で読みやすいドキュメント文書を作成する人向けの指針です。
 
 ## 基本方針
 
-Viewer は、選択したフォルダを 1 つの Project として扱います。
+Viewer は、選択したフォルダを 1 つのドキュメントとして扱います。
 
-Project の入口には `README.md` を置くことを推奨します。`README.md` の最初の `# 見出し` は Viewer のタイトルやブラウザタブ名に使われます。
+ドキュメントの入口には `README.md` を置くことを推奨します。`README.md` の最初の `# 見出し` は Viewer のタイトルやブラウザタブ名に使われます。
 
 ## 作成と確認の流れ
 
@@ -23,10 +23,10 @@ flowchart LR
 
 ## 推奨フォルダ構成
 
-小さな Project では、ルート直下に Markdown を並べるだけで十分です。
+小さなドキュメントでは、ルート直下に Markdown を並べるだけで十分です。
 
 ```text
-project-docs/
+ドキュメント-docs/
   README.md
   overview.md
   setup.md
@@ -36,7 +36,7 @@ project-docs/
 文書が増える場合は、読み手の目的ごとにフォルダを分けます。
 
 ```text
-project-docs/
+ドキュメント-docs/
   README.md
   user-guide/
     getting-started.md
@@ -49,7 +49,7 @@ project-docs/
     screen-main.png
 ```
 
-`.project-docs` や `.docs` のようなドット始まりのフォルダも、Viewer のルートとして選択できます。
+`.document-docs` や `.docs` のようなドット始まりのフォルダも、Viewer のルートとして選択できます。
 
 ただし、選択ルートの配下にあるドット始まりのファイルやフォルダはインデックス対象外です。Viewer で見せたい文書は、ルート配下の通常名フォルダに置いてください。
 
@@ -120,7 +120,7 @@ Markdown パーサーは軽量な独自実装です。CommonMark や GitHub Flav
 
 ## リンク
 
-Project 内の Markdown へのリンクは、相対パスで書きます。
+ドキュメント内の Markdown へのリンクは、相対パスで書きます。
 
 ```markdown
 [仕様](development/specification.md)
@@ -153,7 +153,7 @@ Project 内の Markdown へのリンクは、相対パスで書きます。
 ![メイン画面](assets/screen-main.png)
 ```
 
-文書と画像の距離が遠くなりすぎるとリンク切れに気づきにくくなります。ページ群ごとに `assets` フォルダを置くか、Project 共通の `assets` フォルダにまとめる運用を決めてください。
+文書と画像の距離が遠くなりすぎるとリンク切れに気づきにくくなります。ページ群ごとに `assets` フォルダを置くか、ドキュメント共通の `assets` フォルダにまとめる運用を決めてください。
 
 ## Mermaid 図
 
@@ -174,7 +174,7 @@ flowchart TD
 ```markdown
 | 項目 | 説明 |
 | --- | --- |
-| README.md | Project の入口 |
+| README.md | ドキュメントの入口 |
 | assets/ | 画像置き場 |
 ```
 
