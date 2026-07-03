@@ -8,7 +8,8 @@
     openFolders: "markdownDocsPreview.openFolders",
     sidebarWidth: "markdownDocsPreview.sidebarWidth",
     theme: "markdownDocsPreview.theme",
-    documents: "documents"
+    documents: "documents",
+    tauriDocuments: "markdownDocsPreview.tauriDocuments"
   };
 
   const DB = {
@@ -65,6 +66,7 @@
   let openFolders = loadOpenFolders();
   let pendingHash = initialRoute.hash;
   let rootDirectoryHandle = null;
+  let rootDocumentPath = "";
   let rootDisplayName = "Markdown 文書";
   let rootReadmeTitle = "";
   let activeDocumentId = initialRoute.documentId || sessionStorage.getItem(STORAGE.activeDocumentId) || localStorage.getItem(STORAGE.activeDocumentId) || "";
@@ -97,11 +99,13 @@
   }
 
   function updateEnvironmentHints() {
-    elements.chooseFolderButton.hidden = !supportsFileSystemAccess();
-    elements.documentMenuButton.hidden = !supportsFileSystemAccess();
-    elements.documentMenuButton.classList.toggle("is-callout", !rootDirectoryHandle);
+    const canAccessDocuments = supportsDocumentAccess();
+    elements.chooseFolderButton.hidden = !canAccessDocuments;
+    elements.documentMenuButton.hidden = !canAccessDocuments;
+    elements.documentMenuButton.classList.toggle("is-callout", !hasActiveDocumentRoot());
+    elements.editorSelect.hidden = isTauriMode();
     elements.brandHomeButton.textContent = rootReadmeTitle || rootDisplayName || "Markdown 文書";
-    elements.brandSubtitle.textContent = rootDirectoryHandle
+    elements.brandSubtitle.textContent = hasActiveDocumentRoot()
       ? `${activeDocumentDisplayPath()} / ${docs.length || 0}ページ`
       : "Markdown フォルダ未選択";
     updateDocumentTitle();
@@ -110,7 +114,7 @@
 
   function updateDocumentTitle() {
     const documentTitle = rootReadmeTitle || rootDisplayName || "";
-    document.title = documentTitle && rootDirectoryHandle
+    document.title = documentTitle && hasActiveDocumentRoot()
       ? `${documentTitle} - Markdown Viewer`
       : "Markdown Viewer";
   }
@@ -268,6 +272,7 @@
 
   function documentDisplayPath(documentItem) {
     if (!documentItem) return rootDisplayName || "";
+    if (documentItem.rootPath) return documentItem.rootPath;
     const editorRootPath = documentItem.editorRootPaths && documentItem.editorRootPaths[selectedEditorId()];
     return editorRootPath || documentItem.folderName || documentItem.handle?.name || documentItem.name || "";
   }
@@ -337,11 +342,29 @@
   }
 
   async function loadMarkdownIndex() {
+    if (isTauriMode()) {
+      await ensureDirectoryHandle();
+      const result = await invokeTauri("index_markdown", { root: rootDocumentPath });
+      if (result.folderName) rootDisplayName = result.folderName;
+      if (result.rootPath) rootDocumentPath = normalizeLocalPathInput(result.rootPath);
+      return Array.isArray(result.paths) ? result.paths.map(normalizePath) : [];
+    }
+
     await ensureDirectoryHandle();
     return indexDirectoryMarkdownFiles(rootDirectoryHandle);
   }
 
   async function ensureDirectoryHandle() {
+    if (isTauriMode()) {
+      if (rootDocumentPath) return;
+      const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId) || documentHistory[0];
+      if (activeDocument) {
+        await setActiveDocument(activeDocument);
+        return;
+      }
+      throw new Error("Markdown 文書フォルダが未選択です。上部の「ドキュメント一覧」から対象フォルダを選択してください。");
+    }
+
     if (rootDirectoryHandle) {
       await verifyDirectoryPermission(rootDirectoryHandle);
       return;
@@ -358,6 +381,11 @@
   }
 
   async function chooseMarkdownFolder() {
+    if (isTauriMode()) {
+      await chooseDocumentRootWithTauri();
+      return;
+    }
+
     if (!supportsFileSystemAccess()) {
       showToast("このブラウザは File System Access API に対応していません", "error", 5000);
       return;
@@ -389,6 +417,42 @@
     }
   }
 
+  async function chooseDocumentRootWithTauri() {
+    try {
+      const rootPath = await invokeTauri("choose_document_root");
+      if (!rootPath) return;
+      await addTauriDocumentFromPath(rootPath);
+    } catch (error) {
+      showToast(`フォルダ選択に失敗しました: ${error.message || error}`, "error", 5000);
+    }
+  }
+
+  async function addTauriDocumentFromPath(inputPath) {
+    const rootPath = normalizeLocalPathInput(inputPath);
+    if (!rootPath) return;
+
+    try {
+      const index = await invokeTauri("index_markdown", { root: rootPath });
+      const resolvedRootPath = normalizeLocalPathInput(index.rootPath || rootPath);
+      const folderName = index.folderName || folderNameFromLocalPath(resolvedRootPath) || "Markdown 文書";
+      const existingDocument = documentHistory.find((documentItem) => sameLocalPath(documentItem.rootPath, resolvedRootPath));
+      const documentTitle = await loadRootReadmeTitleFromTauriRoot(resolvedRootPath, folderName);
+      await setActiveDocument({
+        ...(existingDocument || {}),
+        id: existingDocument ? existingDocument.id : createDocumentId(),
+        name: documentTitle,
+        folderName,
+        rootPath: resolvedRootPath,
+        lastOpenedAt: new Date().toISOString()
+      }, { resetToReadme: true });
+      pendingHash = "";
+      closeDocumentDropdown();
+      await refreshIndexAndLoad();
+    } catch (error) {
+      showToast(`ドキュメント登録に失敗しました: ${error.message || error}`, "error", 5000);
+    }
+  }
+
   async function findDocumentForHandle(handle) {
     if (!handle || typeof handle.isSameEntry !== "function") return null;
     for (const documentItem of documentHistory) {
@@ -410,6 +474,23 @@
         ...documentItem,
         lastOpenedAt: new Date().toISOString()
       }, { resetToReadme: options.resetToReadme === true });
+
+      if (isTauriMode()) {
+        const fallbackName = documentItem.folderName || folderNameFromLocalPath(documentItem.rootPath) || documentItem.name || "Markdown 文書";
+        await invokeTauri("index_markdown", { root: documentItem.rootPath });
+        const documentTitle = await loadRootReadmeTitleFromTauriRoot(documentItem.rootPath, fallbackName);
+        await setActiveDocument({
+          ...documentItem,
+          name: documentTitle,
+          folderName: fallbackName,
+          rootPath: documentItem.rootPath,
+          lastOpenedAt: new Date().toISOString()
+        }, { resetToReadme: options.resetToReadme === true });
+        closeDocumentDropdown();
+        if (options.refresh !== false) await refreshIndexAndLoad();
+        return;
+      }
+
       await verifyDirectoryPermission(documentItem.handle);
       const fallbackName = documentItem.folderName || documentItem.name || "Markdown 文書";
       const documentTitle = await loadRootReadmeTitleFromHandle(documentItem.handle, fallbackName);
@@ -422,6 +503,11 @@
       closeDocumentDropdown();
       if (options.refresh !== false) await refreshIndexAndLoad();
     } catch (error) {
+      if (isTauriMode()) {
+        await removeDocumentFromHistory(documentId, { silent: true });
+        showToast(`${documentItem.name || "ドキュメント"} を参照できなかったため、履歴から削除しました`, "error", 5000);
+        return;
+      }
       if (isHandleReferenceError(error)) {
         await removeDocumentFromHistory(documentId, { silent: true });
         showToast(`${documentItem.name || "ドキュメント"} を参照できなかったため、履歴から削除しました`, "error", 5000);
@@ -432,8 +518,9 @@
   }
 
   async function setActiveDocument(documentItem, options = {}) {
-    rootDirectoryHandle = documentItem.handle;
-    rootDisplayName = documentItem.folderName || documentItem.handle?.name || documentItem.name || "Markdown 文書";
+    rootDirectoryHandle = isTauriMode() ? null : documentItem.handle;
+    rootDocumentPath = isTauriMode() ? normalizeLocalPathInput(documentItem.rootPath || "") : "";
+    rootDisplayName = documentItem.folderName || folderNameFromLocalPath(rootDocumentPath) || documentItem.handle?.name || documentItem.name || "Markdown 文書";
     rootReadmeTitle = documentItem.name || rootDisplayName;
     activeDocumentId = documentItem.id;
     sessionStorage.setItem(STORAGE.activeDocumentId, activeDocumentId);
@@ -458,6 +545,7 @@
     if (activeDocumentId === documentId) {
       activeDocumentId = "";
       rootDirectoryHandle = null;
+      rootDocumentPath = "";
       rootDisplayName = "Markdown 文書";
       rootReadmeTitle = "";
       docs = [];
@@ -512,7 +600,12 @@
 
   async function loadRootReadmeTitle() {
     if (!docs.some((doc) => doc.path === README_PATH)) return "";
-    return loadRootReadmeTitleFromHandle(rootDirectoryHandle, rootDisplayName);
+    try {
+      const markdown = await readMarkdownFile(README_PATH);
+      return extractTitleFromMarkdown(markdown) || rootDisplayName || "";
+    } catch {
+      return rootDisplayName || "";
+    }
   }
 
   async function loadRootReadmeTitleFromHandle(handle, fallbackTitle) {
@@ -521,6 +614,15 @@
       const readmeHandle = await getFileHandleByPath(handle, README_PATH);
       const file = await readmeHandle.getFile();
       const markdown = await file.text();
+      return extractTitleFromMarkdown(markdown) || fallbackTitle || "";
+    } catch {
+      return fallbackTitle || "";
+    }
+  }
+
+  async function loadRootReadmeTitleFromTauriRoot(rootPath, fallbackTitle) {
+    try {
+      const markdown = await invokeTauri("read_text_file", { root: rootPath, path: README_PATH });
       return extractTitleFromMarkdown(markdown) || fallbackTitle || "";
     } catch {
       return fallbackTitle || "";
@@ -541,6 +643,10 @@
 
   async function readMarkdownFile(path) {
     await ensureDirectoryHandle();
+    if (isTauriMode()) {
+      return invokeTauri("read_text_file", { root: rootDocumentPath, path: normalizePath(path) });
+    }
+
     const handle = await getFileHandleByPath(rootDirectoryHandle, path);
     const file = await handle.getFile();
     return file.text();
@@ -585,7 +691,7 @@
 
   function renderLoadError(error) {
     const message = error && error.message ? error.message : String(error);
-    const folderButton = supportsFileSystemAccess()
+    const folderButton = supportsDocumentAccess()
       ? '<p><button class="button" type="button" data-choose-folder>新規フォルダ選択</button></p>'
       : '<p>このブラウザは File System Access API に対応していません。Chrome または Edge で開いてください。</p>';
     const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId);
@@ -603,10 +709,13 @@
 
     if (activeDocument) {
       openDocumentDropdown();
+      const reconnectMessage = isTauriMode()
+        ? "保存済みのドキュメントPathにアクセスできません。フォルダの移動・リネーム・削除がないか確認してください。"
+        : "ブラウザを開き直したため、ドキュメントフォルダの読み取り権限を再確認する必要があります。";
       elements.markdownBody.innerHTML = `
         <div class="empty-state">
           <h2>${escapeHtml(activeDocument.name || activeDocument.folderName || "ドキュメント")} に再接続してください</h2>
-          <p>ブラウザを開き直したため、ドキュメントフォルダの読み取り権限を再確認する必要があります。</p>
+          <p>${reconnectMessage}</p>
           <p><button class="button" type="button" data-reconnect-document>再接続</button></p>
         </div>`;
       elements.markdownBody.querySelector("[data-reconnect-document]")?.addEventListener("click", () => {
@@ -1106,6 +1215,18 @@
 
       const resolvedPath = resolveAssetPath(rawSrc, activePath);
       try {
+        if (isTauriMode()) {
+          const binary = await invokeTauri("read_binary_file", { root: rootDocumentPath, path: resolvedPath });
+          const bytes = binary instanceof ArrayBuffer ? new Uint8Array(binary) : new Uint8Array(binary || []);
+          const blob = new Blob([bytes], { type: assetMimeType(resolvedPath) });
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          image.src = url;
+          image.title = resolvedPath;
+          image.removeAttribute("data-image-src");
+          return;
+        }
+
         const handle = await getFileHandleByPath(rootDirectoryHandle, resolvedPath);
         const file = await handle.getFile();
         const url = URL.createObjectURL(file);
@@ -1138,6 +1259,20 @@
     element.className = "missing-image";
     element.textContent = `画像を読み込めませんでした: ${src}`;
     return element;
+  }
+
+  function assetMimeType(path) {
+    const extension = (String(path || "").match(/\.([^.?#/]+)$/)?.[1] || "").toLowerCase();
+    const mimeTypes = {
+      svg: "image/svg+xml",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      bmp: "image/bmp"
+    };
+    return mimeTypes[extension] || "application/octet-stream";
   }
 
   function revokeObjectUrls() {
@@ -1285,7 +1420,7 @@
   }
 
   async function reloadActiveDocForTheme() {
-    if (!rootDirectoryHandle || !docs.some((doc) => doc.path === activePath)) return;
+    if (!hasActiveDocumentRoot() || !docs.some((doc) => doc.path === activePath)) return;
     if (!elements.markdownBody.querySelector(".mermaid")) return;
     const scrollTop = elements.contentScroll.scrollTop;
     await loadDoc(activePath, { hash: pendingHash, history: "replace" });
@@ -1309,13 +1444,22 @@
 
   function pathWithRootFolder(path) {
     const normalizedPath = normalizePath(path);
-    const folderName = normalizePath(rootDisplayName || rootDirectoryHandle?.name || "");
+    const folderName = normalizePath(rootDisplayName || folderNameFromLocalPath(rootDocumentPath) || rootDirectoryHandle?.name || "");
     return folderName ? normalizePath(`${folderName}/${normalizedPath}`) : normalizedPath;
   }
 
   async function openActivePathInEditor() {
-    if (!rootDirectoryHandle || !activeDocumentId || !docs.some((doc) => doc.path === activePath)) {
+    if (!hasActiveDocumentRoot() || !activeDocumentId || !docs.some((doc) => doc.path === activePath)) {
       showToast("開く対象のページがありません", "error", 5000);
+      return;
+    }
+
+    if (isTauriMode()) {
+      try {
+        await invokeTauri("open_file", { root: rootDocumentPath, path: activePath });
+      } catch (error) {
+        showToast(`関連付けアプリで開けませんでした: ${error.message || error}`, "error", 5000);
+      }
       return;
     }
 
@@ -1332,6 +1476,8 @@
   async function ensureEditorRootPath(editorId) {
     const documentItem = documentHistory.find((item) => item.id === activeDocumentId);
     if (!documentItem) return "";
+
+    if (isTauriMode()) return documentItem.rootPath || rootDocumentPath || "";
 
     const current = documentItem.editorRootPaths && documentItem.editorRootPaths[editorId];
     if (current) return current;
@@ -1423,7 +1569,47 @@
     return typeof window.showDirectoryPicker === "function" && typeof indexedDB !== "undefined";
   }
 
+  function supportsDocumentAccess() {
+    return isTauriMode() || supportsFileSystemAccess();
+  }
+
+  function hasActiveDocumentRoot() {
+    return isTauriMode() ? Boolean(rootDocumentPath) : Boolean(rootDirectoryHandle);
+  }
+
+  function isTauriMode() {
+    return Boolean(window.__TAURI__?.core?.invoke);
+  }
+
+  async function invokeTauri(command, args = {}) {
+    if (!isTauriMode()) throw new Error("Tauri API is not available.");
+    return window.__TAURI__.core.invoke(command, args);
+  }
+
+  function folderNameFromLocalPath(path) {
+    const normalized = normalizeLocalPathInput(path);
+    if (!normalized) return "";
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] || normalized;
+  }
+
+  function sameLocalPath(left, right) {
+    return normalizeLocalPathInput(left).toLowerCase() === normalizeLocalPathInput(right).toLowerCase();
+  }
+
   async function loadDocumentHistory() {
+    if (isTauriMode()) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE.tauriDocuments) || "[]");
+        documentHistory = Array.isArray(stored)
+          ? stored.filter((documentItem) => documentItem && documentItem.id && documentItem.rootPath)
+          : [];
+      } catch {
+        documentHistory = [];
+      }
+      return;
+    }
+
     if (!supportsFileSystemAccess()) {
       documentHistory = [];
       return;
@@ -1434,6 +1620,20 @@
   }
 
   async function storeDocumentHistory() {
+    if (isTauriMode()) {
+      const serializable = documentHistory
+        .filter((documentItem) => documentItem && documentItem.id && documentItem.rootPath)
+        .map((documentItem) => ({
+          id: documentItem.id,
+          name: documentItem.name || "",
+          folderName: documentItem.folderName || "",
+          rootPath: documentItem.rootPath || "",
+          lastOpenedAt: documentItem.lastOpenedAt || ""
+        }));
+      localStorage.setItem(STORAGE.tauriDocuments, JSON.stringify(serializable));
+      return;
+    }
+
     if (!supportsFileSystemAccess()) return;
     await writeToHandleStore(STORAGE.documents, documentHistory);
   }

@@ -1,18 +1,20 @@
 # Markdown Viewer の概要
 
-このプロジェクトは、ローカルフォルダ内の Markdown 文書をブラウザで閲覧するためのシングルページ Viewer です。
+Markdown Viewer は、ローカルフォルダ内の Markdown 文書を読むためのデスクトップ Viewer です。
 
-`viewer.html` を Chrome または Edge で開き、File System Access API を使って任意の Markdown フォルダを選択します。選択したフォルダ内の `.md` ファイルを再帰的に読み込み、左側のツリーからページを移動できます。
+通常運用は Tauri アプリ版です。OS 標準のフォルダ選択 UI でドキュメントルートを登録し、配下の `.md` ファイルをツリー表示します。ブラウザの File System Access API に依存しないため、ブラウザ再起動後の権限切れやローカルサーバー起動忘れを避けられます。
+
+`viewer.html` を直接開くブラウザ版は、開発・確認用のフォールバックとして残しています。
 
 ## ガイド
 
 - [Viewer 利用者ガイド](01_viewer-user-guide.md)
-    - ドキュメントを開く、検索する、複数タブで使うなど、閲覧者向けの操作説明
+  - アプリの起動、ドキュメント登録、ページ移動、検索、関連付けアプリで開く操作。
 - [ドキュメント作成者ガイド](02_document-author-guide.md)
-    - この Viewer で表示する Markdown 文書の構成、リンク、画像、Mermaid の書き方について
+  - この Viewer で読みやすい Markdown 文書の構成、リンク、画像、Mermaid の書き方。
 
-## 対応ブラウザ
+## 開発ドキュメント
 
-フォルダ選択と履歴再利用には File System Access API が必要です。主な対象は Chrome または Edge です。
-
-API 非対応ブラウザでは、フォルダ選択を使った通常運用はできません。
+- [要件](development/requirements.md)
+- [仕様](development/specification.md)
+- [ToDo](development/todo.md)
