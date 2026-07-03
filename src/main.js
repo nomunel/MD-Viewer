@@ -8,7 +8,7 @@
     openFolders: "markdownDocsPreview.openFolders",
     sidebarWidth: "markdownDocsPreview.sidebarWidth",
     theme: "markdownDocsPreview.theme",
-    documents: "documents"
+    documents: "markdownDocsPreview.documents"
   };
 
   const DB = {
@@ -17,6 +17,7 @@
     store: "handles"
   };
 
+  const SERVER_TOKEN = new URLSearchParams(location.search).get("serverToken") || "";
   const PREVIEW_FILE = "Preview.html";
   const README_PATH = "README.md";
   const EDITORS = {
@@ -49,7 +50,9 @@
     documentMenuButton: document.getElementById("documentMenuButton"),
     documentDropdown: document.getElementById("documentDropdown"),
     documentList: document.getElementById("documentList"),
+    documentPathInput: document.getElementById("documentPathInput"),
     chooseFolderButton: document.getElementById("chooseFolderButton"),
+    addDocumentButton: document.getElementById("addDocumentButton"),
     reloadButton: document.getElementById("reloadButton"),
     themeButton: document.getElementById("themeButton"),
     copyPathButton: document.getElementById("copyPathButton"),
@@ -65,6 +68,7 @@
   let openFolders = loadOpenFolders();
   let pendingHash = initialRoute.hash;
   let rootDirectoryHandle = null;
+  let rootDocumentPath = "";
   let rootDisplayName = "Markdown 文書";
   let rootReadmeTitle = "";
   let activeDocumentId = initialRoute.documentId || sessionStorage.getItem(STORAGE.activeDocumentId) || localStorage.getItem(STORAGE.activeDocumentId) || "";
@@ -97,11 +101,14 @@
   }
 
   function updateEnvironmentHints() {
-    elements.chooseFolderButton.hidden = !supportsFileSystemAccess();
-    elements.documentMenuButton.hidden = !supportsFileSystemAccess();
-    elements.documentMenuButton.classList.toggle("is-callout", !rootDirectoryHandle);
+    const canAccessDocuments = supportsDocumentAccess();
+    elements.chooseFolderButton.hidden = !canAccessDocuments;
+    elements.addDocumentButton.hidden = !isServerMode();
+    elements.documentPathInput.hidden = !isServerMode();
+    elements.documentMenuButton.hidden = !canAccessDocuments;
+    elements.documentMenuButton.classList.toggle("is-callout", !hasActiveDocumentRoot());
     elements.brandHomeButton.textContent = rootReadmeTitle || rootDisplayName || "Markdown 文書";
-    elements.brandSubtitle.textContent = rootDirectoryHandle
+    elements.brandSubtitle.textContent = hasActiveDocumentRoot()
       ? `${activeDocumentDisplayPath()} / ${docs.length || 0}ページ`
       : "Markdown フォルダ未選択";
     updateDocumentTitle();
@@ -110,7 +117,7 @@
 
   function updateDocumentTitle() {
     const documentTitle = rootReadmeTitle || rootDisplayName || "";
-    document.title = documentTitle && rootDirectoryHandle
+    document.title = documentTitle && hasActiveDocumentRoot()
       ? `${documentTitle} - Markdown Viewer`
       : "Markdown Viewer";
   }
@@ -129,6 +136,27 @@
     elements.reloadButton.addEventListener("click", refreshIndexAndLoad);
     elements.documentMenuButton.addEventListener("click", toggleDocumentDropdown);
     elements.chooseFolderButton.addEventListener("click", chooseMarkdownFolder);
+    elements.addDocumentButton.addEventListener("click", addDocumentFromPathInput);
+    elements.documentPathInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addDocumentFromPathInput();
+      }
+    });
+    elements.documentPathInput.addEventListener("dragover", (event) => {
+      if (!isServerMode()) return;
+      event.preventDefault();
+    });
+    elements.documentPathInput.addEventListener("drop", (event) => {
+      if (!isServerMode()) return;
+      event.preventDefault();
+      const text = event.dataTransfer.getData("text/plain").trim();
+      if (text) {
+        elements.documentPathInput.value = text;
+        return;
+      }
+      showToast("ブラウザはドラッグされたフォルダの絶対Pathを渡せません。参照ボタンかPath貼り付けを使ってください", "info", 5000);
+    });
     elements.themeButton.addEventListener("click", () => {
       toggleTheme();
     });
@@ -268,6 +296,7 @@
 
   function documentDisplayPath(documentItem) {
     if (!documentItem) return rootDisplayName || "";
+    if (documentItem.rootPath) return documentItem.rootPath;
     const editorRootPath = documentItem.editorRootPaths && documentItem.editorRootPaths[selectedEditorId()];
     return editorRootPath || documentItem.folderName || documentItem.handle?.name || documentItem.name || "";
   }
@@ -337,11 +366,29 @@
   }
 
   async function loadMarkdownIndex() {
+    if (isServerMode()) {
+      await ensureDirectoryHandle();
+      const result = await fetchApiJson("index", { root: rootDocumentPath });
+      if (result.folderName) rootDisplayName = result.folderName;
+      if (result.rootPath) rootDocumentPath = result.rootPath;
+      return Array.isArray(result.paths) ? result.paths.map(normalizePath) : [];
+    }
+
     await ensureDirectoryHandle();
     return indexDirectoryMarkdownFiles(rootDirectoryHandle);
   }
 
   async function ensureDirectoryHandle() {
+    if (isServerMode()) {
+      if (rootDocumentPath) return;
+      const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId) || documentHistory[0];
+      if (activeDocument) {
+        await setActiveDocument(activeDocument);
+        return;
+      }
+      throw new Error("Markdown 文書フォルダが未選択です。上部の「ドキュメント一覧」から対象フォルダを登録してください。");
+    }
+
     if (rootDirectoryHandle) {
       await verifyDirectoryPermission(rootDirectoryHandle);
       return;
@@ -358,6 +405,11 @@
   }
 
   async function chooseMarkdownFolder() {
+    if (isServerMode()) {
+      await browseDocumentFolder();
+      return;
+    }
+
     if (!supportsFileSystemAccess()) {
       showToast("このブラウザは File System Access API に対応していません", "error", 5000);
       return;
@@ -389,6 +441,60 @@
     }
   }
 
+  async function browseDocumentFolder() {
+    try {
+      showToast("フォルダ選択ダイアログを開いています。表示されない場合はタスクバーを確認してください", "info", 5000);
+      const result = await fetchApiJson("pick-folder");
+      if (!result.path) {
+        hideToast();
+        return;
+      }
+      elements.documentPathInput.value = result.path;
+      await addDocumentFromPath(result.path);
+    } catch (error) {
+      showToast(`フォルダ参照に失敗しました: ${error.message || error}`, "error", 5000);
+    }
+  }
+
+  async function addDocumentFromPathInput() {
+    await addDocumentFromPath(elements.documentPathInput.value);
+  }
+
+  async function addDocumentFromPath(inputPath) {
+    if (!isServerMode()) return;
+
+    const rootPath = normalizeLocalPathInput(inputPath);
+    if (!rootPath) {
+      showToast("ドキュメントルートの絶対Pathを入力してください", "error", 4000);
+      return;
+    }
+    if (!isLikelyAbsolutePath(rootPath)) {
+      showToast("絶対Pathを入力してください", "error", 4000);
+      return;
+    }
+
+    try {
+      const index = await fetchApiJson("index", { root: rootPath });
+      const resolvedRootPath = normalizeLocalPathInput(index.rootPath || rootPath);
+      const folderName = index.folderName || folderNameFromLocalPath(resolvedRootPath) || "Markdown 文書";
+      const existingDocument = documentHistory.find((documentItem) => sameLocalPath(documentItem.rootPath, resolvedRootPath));
+      const documentTitle = await loadRootReadmeTitleFromServerRoot(resolvedRootPath, folderName);
+      await setActiveDocument({
+        ...(existingDocument || {}),
+        id: existingDocument ? existingDocument.id : createDocumentId(),
+        name: documentTitle,
+        folderName,
+        rootPath: resolvedRootPath,
+        lastOpenedAt: new Date().toISOString()
+      }, { resetToReadme: true });
+      elements.documentPathInput.value = "";
+      closeDocumentDropdown();
+      await refreshIndexAndLoad();
+    } catch (error) {
+      showToast(`ドキュメント登録に失敗しました: ${error.message || error}`, "error", 5000);
+    }
+  }
+
   async function findDocumentForHandle(handle) {
     if (!handle || typeof handle.isSameEntry !== "function") return null;
     for (const documentItem of documentHistory) {
@@ -410,6 +516,22 @@
         ...documentItem,
         lastOpenedAt: new Date().toISOString()
       }, { resetToReadme: options.resetToReadme === true });
+
+      if (isServerMode()) {
+        const fallbackName = documentItem.folderName || folderNameFromLocalPath(documentItem.rootPath) || documentItem.name || "Markdown 文書";
+        const documentTitle = await loadRootReadmeTitleFromServerRoot(documentItem.rootPath, fallbackName);
+        await setActiveDocument({
+          ...documentItem,
+          name: documentTitle,
+          folderName: fallbackName,
+          rootPath: documentItem.rootPath,
+          lastOpenedAt: new Date().toISOString()
+        }, { resetToReadme: options.resetToReadme === true });
+        closeDocumentDropdown();
+        if (options.refresh !== false) await refreshIndexAndLoad();
+        return;
+      }
+
       await verifyDirectoryPermission(documentItem.handle);
       const fallbackName = documentItem.folderName || documentItem.name || "Markdown 文書";
       const documentTitle = await loadRootReadmeTitleFromHandle(documentItem.handle, fallbackName);
@@ -432,8 +554,9 @@
   }
 
   async function setActiveDocument(documentItem, options = {}) {
-    rootDirectoryHandle = documentItem.handle;
-    rootDisplayName = documentItem.folderName || documentItem.handle?.name || documentItem.name || "Markdown 文書";
+    rootDirectoryHandle = isServerMode() ? null : documentItem.handle;
+    rootDocumentPath = isServerMode() ? normalizeLocalPathInput(documentItem.rootPath || "") : "";
+    rootDisplayName = documentItem.folderName || folderNameFromLocalPath(rootDocumentPath) || documentItem.handle?.name || documentItem.name || "Markdown 文書";
     rootReadmeTitle = documentItem.name || rootDisplayName;
     activeDocumentId = documentItem.id;
     sessionStorage.setItem(STORAGE.activeDocumentId, activeDocumentId);
@@ -458,6 +581,7 @@
     if (activeDocumentId === documentId) {
       activeDocumentId = "";
       rootDirectoryHandle = null;
+      rootDocumentPath = "";
       rootDisplayName = "Markdown 文書";
       rootReadmeTitle = "";
       docs = [];
@@ -512,7 +636,12 @@
 
   async function loadRootReadmeTitle() {
     if (!docs.some((doc) => doc.path === README_PATH)) return "";
-    return loadRootReadmeTitleFromHandle(rootDirectoryHandle, rootDisplayName);
+    try {
+      const markdown = await readMarkdownFile(README_PATH);
+      return extractTitleFromMarkdown(markdown) || rootDisplayName || "";
+    } catch {
+      return rootDisplayName || "";
+    }
   }
 
   async function loadRootReadmeTitleFromHandle(handle, fallbackTitle) {
@@ -521,6 +650,15 @@
       const readmeHandle = await getFileHandleByPath(handle, README_PATH);
       const file = await readmeHandle.getFile();
       const markdown = await file.text();
+      return extractTitleFromMarkdown(markdown) || fallbackTitle || "";
+    } catch {
+      return fallbackTitle || "";
+    }
+  }
+
+  async function loadRootReadmeTitleFromServerRoot(rootPath, fallbackTitle) {
+    try {
+      const markdown = await fetchApiText("file", { root: rootPath, path: README_PATH });
       return extractTitleFromMarkdown(markdown) || fallbackTitle || "";
     } catch {
       return fallbackTitle || "";
@@ -541,6 +679,10 @@
 
   async function readMarkdownFile(path) {
     await ensureDirectoryHandle();
+    if (isServerMode()) {
+      return fetchApiText("file", { root: rootDocumentPath, path: normalizePath(path) });
+    }
+
     const handle = await getFileHandleByPath(rootDirectoryHandle, path);
     const file = await handle.getFile();
     return file.text();
@@ -585,7 +727,7 @@
 
   function renderLoadError(error) {
     const message = error && error.message ? error.message : String(error);
-    const folderButton = supportsFileSystemAccess()
+    const folderButton = supportsDocumentAccess()
       ? '<p><button class="button" type="button" data-choose-folder>新規フォルダ選択</button></p>'
       : '<p>このブラウザは File System Access API に対応していません。Chrome または Edge で開いてください。</p>';
     const activeDocument = documentHistory.find((documentItem) => documentItem.id === activeDocumentId);
@@ -1106,6 +1248,16 @@
 
       const resolvedPath = resolveAssetPath(rawSrc, activePath);
       try {
+        if (isServerMode()) {
+          const blob = await fetchApiBlob("asset", { root: rootDocumentPath, path: resolvedPath });
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          image.src = url;
+          image.title = resolvedPath;
+          image.removeAttribute("data-image-src");
+          return;
+        }
+
         const handle = await getFileHandleByPath(rootDirectoryHandle, resolvedPath);
         const file = await handle.getFile();
         const url = URL.createObjectURL(file);
@@ -1285,7 +1437,7 @@
   }
 
   async function reloadActiveDocForTheme() {
-    if (!rootDirectoryHandle || !docs.some((doc) => doc.path === activePath)) return;
+    if (!hasActiveDocumentRoot() || !docs.some((doc) => doc.path === activePath)) return;
     if (!elements.markdownBody.querySelector(".mermaid")) return;
     const scrollTop = elements.contentScroll.scrollTop;
     await loadDoc(activePath, { hash: pendingHash, history: "replace" });
@@ -1309,12 +1461,12 @@
 
   function pathWithRootFolder(path) {
     const normalizedPath = normalizePath(path);
-    const folderName = normalizePath(rootDisplayName || rootDirectoryHandle?.name || "");
+    const folderName = normalizePath(rootDisplayName || folderNameFromLocalPath(rootDocumentPath) || rootDirectoryHandle?.name || "");
     return folderName ? normalizePath(`${folderName}/${normalizedPath}`) : normalizedPath;
   }
 
   async function openActivePathInEditor() {
-    if (!rootDirectoryHandle || !activeDocumentId || !docs.some((doc) => doc.path === activePath)) {
+    if (!hasActiveDocumentRoot() || !activeDocumentId || !docs.some((doc) => doc.path === activePath)) {
       showToast("開く対象のページがありません", "error", 5000);
       return;
     }
@@ -1332,6 +1484,8 @@
   async function ensureEditorRootPath(editorId) {
     const documentItem = documentHistory.find((item) => item.id === activeDocumentId);
     if (!documentItem) return "";
+
+    if (isServerMode()) return documentItem.rootPath || rootDocumentPath || "";
 
     const current = documentItem.editorRootPaths && documentItem.editorRootPaths[editorId];
     if (current) return current;
@@ -1364,7 +1518,7 @@
     const editor = EDITORS[editorId] || EDITORS.vscode;
     const example = `${rootDisplayName || "document-docs"}`;
     return `${editor.label} で開くため、初回だけドキュメントルートの絶対Pathを入力してください。\n\n` +
-      `例: D:\\Documents\\Example\\${example.replace(/\//g, "\\")}\n`;
+      `例: D:\\Example\\${example.replace(/\//g, "\\")}\n`;
   }
 
   function selectedEditorId() {
@@ -1419,11 +1573,81 @@
     return `${editor.scheme}://file/${encoded}`;
   }
 
+  function apiUrl(endpoint, params = {}) {
+    const url = new URL(`/api/${endpoint}`, location.origin);
+    url.searchParams.set("serverToken", SERVER_TOKEN);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+    });
+    return url;
+  }
+
+  async function fetchApiJson(endpoint, params = {}) {
+    const response = await fetch(apiUrl(endpoint, params), { headers: { "X-Docs-Token": SERVER_TOKEN } });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { error: text };
+    }
+    if (!response.ok) throw new Error(data.error || response.statusText || "API request failed");
+    return data;
+  }
+
+  async function fetchApiText(endpoint, params = {}) {
+    const response = await fetch(apiUrl(endpoint, params), { headers: { "X-Docs-Token": SERVER_TOKEN } });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text || response.statusText || "API request failed");
+    return text;
+  }
+
+  async function fetchApiBlob(endpoint, params = {}) {
+    const response = await fetch(apiUrl(endpoint, params), { headers: { "X-Docs-Token": SERVER_TOKEN } });
+    if (!response.ok) throw new Error(await response.text() || response.statusText || "API request failed");
+    return response.blob();
+  }
+
+  function folderNameFromLocalPath(path) {
+    const normalized = normalizeLocalPathInput(path);
+    if (!normalized) return "";
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] || normalized;
+  }
+
+  function sameLocalPath(left, right) {
+    return normalizeLocalPathInput(left).toLowerCase() === normalizeLocalPathInput(right).toLowerCase();
+  }
+
   function supportsFileSystemAccess() {
     return typeof window.showDirectoryPicker === "function" && typeof indexedDB !== "undefined";
   }
 
+  function supportsDocumentAccess() {
+    return isServerMode() || supportsFileSystemAccess();
+  }
+
+  function hasActiveDocumentRoot() {
+    return isServerMode() ? Boolean(rootDocumentPath) : Boolean(rootDirectoryHandle);
+  }
+
+  function isServerMode() {
+    return Boolean(SERVER_TOKEN) && /^https?:$/.test(location.protocol);
+  }
+
   async function loadDocumentHistory() {
+    if (isServerMode()) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE.documents) || "[]");
+        documentHistory = Array.isArray(stored)
+          ? stored.filter((documentItem) => documentItem && documentItem.id && documentItem.rootPath)
+          : [];
+      } catch {
+        documentHistory = [];
+      }
+      return;
+    }
+
     if (!supportsFileSystemAccess()) {
       documentHistory = [];
       return;
@@ -1434,6 +1658,20 @@
   }
 
   async function storeDocumentHistory() {
+    if (isServerMode()) {
+      const serializable = documentHistory
+        .filter((documentItem) => documentItem && documentItem.id && documentItem.rootPath)
+        .map((documentItem) => ({
+          id: documentItem.id,
+          name: documentItem.name || "",
+          folderName: documentItem.folderName || "",
+          rootPath: documentItem.rootPath || "",
+          lastOpenedAt: documentItem.lastOpenedAt || ""
+        }));
+      localStorage.setItem(STORAGE.documents, JSON.stringify(serializable));
+      return;
+    }
+
     if (!supportsFileSystemAccess()) return;
     await writeToHandleStore(STORAGE.documents, documentHistory);
   }

@@ -245,6 +245,30 @@ button, input, select { font: inherit; }
   margin-bottom: 8px;
 }
 
+.document-register {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.document-path-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.document-register-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .document-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -2,7 +2,7 @@
 
 このプロジェクトは、ローカルフォルダ内の Markdown 文書をブラウザで閲覧するためのシングルページ Viewer です。
 
-`viewer.html` を Chrome または Edge で開き、File System Access API を使って任意の Markdown フォルダを選択します。選択したフォルダ内の `.md` ファイルを再帰的に読み込み、左側のツリーからページを移動できます。
+`docs-preview.cmd` を起動すると、PowerShell のローカルサーバーが `viewer.html` を開きます。ドキュメント一覧から Markdown フォルダの絶対Pathを登録すると、選択したフォルダ内の `.md` ファイルを再帰的に読み込み、左側のツリーからページを移動できます。
 
 ## ガイド
 
@@ -13,6 +13,4 @@
 
 ## 対応ブラウザ
 
-フォルダ選択と履歴再利用には File System Access API が必要です。主な対象は Chrome または Edge です。
-
-API 非対応ブラウザでは、フォルダ選択を使った通常運用はできません。
+通常運用は PowerShell ローカルサーバー方式です。`viewer.html` を直接開いた場合は、File System Access API を使う旧来のフォールバック動作になります。

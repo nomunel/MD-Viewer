@@ -20,7 +20,13 @@
         <button id="documentMenuButton" class="button" type="button" aria-expanded="false" aria-controls="documentDropdown">ドキュメント一覧</button>
         <div id="documentDropdown" class="document-dropdown" hidden>
           <div id="documentList" class="document-list"></div>
-          <button id="chooseFolderButton" class="button" type="button">新規フォルダ選択</button>
+          <div class="document-register">
+            <input id="documentPathInput" class="document-path-input" type="text" placeholder="ドキュメントルートの絶対Path">
+            <div class="document-register-actions">
+              <button id="chooseFolderButton" class="button" type="button">参照</button>
+              <button id="addDocumentButton" class="button" type="button">追加</button>
+            </div>
+          </div>
         </div>
       </div>
       <button id="reloadButton" class="button" type="button">再読込</button>
