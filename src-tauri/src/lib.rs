@@ -70,7 +70,7 @@ fn open_file(app: tauri::AppHandle, root: String, path: String) -> Result<(), St
   let file = resolve_document_file(&root, &path)?;
   app
     .opener()
-    .open_path(path_to_string(&file), None::<&str>)
+    .open_path(path_to_native_string(&file), None::<&str>)
     .map_err(|error| error.to_string())
 }
 
@@ -168,7 +168,21 @@ fn is_markdown_file(name: &str) -> bool {
 }
 
 fn path_to_string(path: &Path) -> String {
-  path.to_string_lossy().replace('\\', "/")
+  strip_windows_verbatim_prefix(&path.to_string_lossy()).replace('\\', "/")
+}
+
+fn path_to_native_string(path: &Path) -> String {
+  strip_windows_verbatim_prefix(&path.to_string_lossy())
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+  if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
+    return format!(r"\\{stripped}");
+  }
+  if let Some(stripped) = path.strip_prefix(r"\\?\") {
+    return stripped.to_string();
+  }
+  path.to_string()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -176,6 +190,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_window_state::Builder::default().build())
     .invoke_handler(tauri::generate_handler![
       choose_document_root,
       index_markdown,
@@ -185,4 +200,25 @@ pub fn run() {
     ])
     .run(tauri::generate_context!())
     .expect("error while running Tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+  use super::strip_windows_verbatim_prefix;
+
+  #[test]
+  fn strips_windows_verbatim_drive_prefix() {
+    assert_eq!(
+      strip_windows_verbatim_prefix(r"\\?\C:\Picchu\Igo Najimi\.project-docs\todo.md"),
+      r"C:\Picchu\Igo Najimi\.project-docs\todo.md"
+    );
+  }
+
+  #[test]
+  fn strips_windows_verbatim_unc_prefix() {
+    assert_eq!(
+      strip_windows_verbatim_prefix(r"\\?\UNC\server\share\.project-docs\todo.md"),
+      r"\\server\share\.project-docs\todo.md"
+    );
+  }
 }

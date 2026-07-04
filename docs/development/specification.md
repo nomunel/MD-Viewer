@@ -60,6 +60,35 @@ flowchart TD
 - なければ File System Access API 対応ブラウザでのフォールバック。
 - どちらも使えない場合はドキュメント登録 UI を無効化する。
 
+## ウィンドウ状態
+
+Tauri 版は `tauri-plugin-window-state` で、アプリ終了時のウィンドウサイズと表示位置を保存し、次回起動時に復元する。
+
+Windows のリリースビルドでは `windows_subsystem = "windows"` を指定し、Viewerとは別のコンソールWindowを表示しない。
+
+## ビルドと配布
+
+開発環境から起動する場合は、Node.js と Rust/Cargo を用意したうえで次を実行する。
+
+```powershell
+npm.cmd install
+npm.cmd run tauri:dev
+```
+
+配布用EXEを作成する場合は、次を実行する。
+
+```powershell
+npm.cmd run tauri:build
+```
+
+Windows 向けの配布物は `src-tauri/target/release/md-viewer.exe` 単体とする。
+
+`src-tauri/tauri.conf.json` の `bundle.active` は `false` にしており、MSI や setup.exe は生成しない。
+
+チーム内配布では、当面はコード署名なしで運用する。SmartScreen や組織ポリシーで問題が出る場合は、証明書による署名を別途検討する。
+
+アイコン画像を差し替えた場合にリソース再生成が走るよう、`src-tauri/build.rs` で `icons/icon.ico` と `icons/icon.png` を `rerun-if-changed` の対象にしている。
+
 ## 状態管理
 
 主な状態は `src/main.js` 内で保持する。
@@ -105,6 +134,18 @@ Tauri 版のドキュメント履歴は `localStorage.markdownDocsPreview.tauriD
 - 段落
 
 Markdown 由来の HTML はそのまま実行しない。基本的に `escapeHtml()` を通して出力する。
+
+## 検索とハイライト
+
+検索はページタイトル、Path、Markdown本文を対象にする。
+
+検索結果では、タイトル、Path、スニペット内の一致箇所を `<mark class="search-highlight">` でハイライトする。
+
+検索結果リンクからページを開く場合は、描画後の本文DOMに対して一致箇所をハイライトし、最初の一致箇所へ自動スクロールする。
+
+本文ハイライトはDOMのテキストノードに対して行い、`pre`、`code`、`.mermaid` 内は対象外にする。
+
+検索欄の入力が変更または削除された場合は、現在表示中のハイライトを解除する。
 
 ## 画像
 

@@ -73,6 +73,7 @@
   let documentHistory = [];
   let objectUrls = [];
   let toastTimer = 0;
+  let activeSearchHighlightQuery = "";
 
   boot();
 
@@ -120,7 +121,7 @@
   }
 
   function bindEvents() {
-    elements.pageSearch.addEventListener("input", renderTree);
+    elements.pageSearch.addEventListener("input", handleSearchInput);
     elements.pageSearch.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -188,6 +189,12 @@
 
   function updateTopButtonVisibility() {
     elements.topButton.classList.toggle("visible", elements.contentScroll.scrollTop > 120);
+  }
+
+  function handleSearchInput() {
+    activeSearchHighlightQuery = "";
+    clearSearchHighlights();
+    renderTree();
   }
 
   function loadOpenFolders() {
@@ -666,6 +673,7 @@
   async function loadDoc(path, options = {}) {
     activePath = normalizePath(path);
     pendingHash = normalizeHistoryHash(options.hash);
+    activeSearchHighlightQuery = String(options.searchQuery || "").trim();
     sessionStorage.setItem(STORAGE.activePath, activePath);
     openBranchForPath(activePath);
     elements.breadcrumb.textContent = activePath;
@@ -681,7 +689,10 @@
       hideToast();
       await renderMermaidDiagrams();
       syncHistory(activePath, pendingHash, options.history || "push");
-      restoreScrollOrHash();
+      if (activeSearchHighlightQuery) {
+        highlightRenderedSearchMatches(activeSearchHighlightQuery, { scrollToFirst: !pendingHash });
+      }
+      restoreScrollOrHash({ skipTopReset: Boolean(activeSearchHighlightQuery && !pendingHash) });
       updateTopButtonVisibility();
     } catch (error) {
       elements.markdownBody.innerHTML = `<div class="empty-state"><h2>読み込めませんでした</h2><p>${escapeHtml(error.message || String(error))}</p></div>`;
@@ -739,6 +750,8 @@
   async function runSearch() {
     const query = elements.pageSearch.value.trim();
     if (!query) {
+      activeSearchHighlightQuery = "";
+      clearSearchHighlights();
       renderTree();
       await loadDoc(activePath || README_PATH);
       return;
@@ -757,7 +770,9 @@
         results.push({
           path: doc.path,
           title: doc.title,
-          snippet: createSnippet(markdown, query)
+          snippet: createSnippet(markdown, query),
+          matchedInTitle: normalizeForSearch(doc.title).includes(normalizedQuery),
+          matchedInPath: normalizeForSearch(doc.path).includes(normalizedQuery)
         });
       } catch {
         // Ignore individual file failures so one bad document does not break search.
@@ -777,9 +792,9 @@
     const escapedQuery = escapeHtml(query);
     const items = results.map((result) => `
       <a class="result-item" href="${escapeAttr(result.path)}" data-path="${escapeAttr(result.path)}">
-        <span class="result-title">${escapeHtml(result.title)}</span>
-        <span class="result-path">${escapeHtml(result.path)}</span>
-        <p class="result-snippet">${escapeHtml(result.snippet || "パスまたはタイトルに一致しました。")}</p>
+        <span class="result-title">${highlightTextHtml(result.title, query)}</span>
+        <span class="result-path">${highlightTextHtml(result.path, query)}</span>
+        <p class="result-snippet">${highlightTextHtml(result.snippet || searchMatchFallback(result), query)}</p>
       </a>`).join("");
 
     return `
@@ -794,9 +809,15 @@
     elements.markdownBody.querySelectorAll("a[data-path]").forEach((anchor) => {
       anchor.addEventListener("click", (event) => {
         event.preventDefault();
-        loadDoc(anchor.dataset.path);
+        loadDoc(anchor.dataset.path, { searchQuery: elements.pageSearch.value.trim() });
       });
     });
+  }
+
+  function searchMatchFallback(result) {
+    if (result.matchedInTitle) return "ページタイトルに一致しました。";
+    if (result.matchedInPath) return "Pathに一致しました。";
+    return "本文に一致しました。";
   }
 
   function createSnippet(markdown, query) {
@@ -808,10 +829,115 @@
     const lowerCompact = compact.toLowerCase();
     const lowerQuery = query.toLowerCase();
     const index = lowerCompact.indexOf(lowerQuery);
-    if (index < 0) return compact.slice(0, 160);
+    if (index < 0) return "";
     const start = Math.max(0, index - 55);
     const end = Math.min(compact.length, index + query.length + 105);
     return `${start > 0 ? "..." : ""}${compact.slice(start, end)}${end < compact.length ? "..." : ""}`;
+  }
+
+  function highlightTextHtml(value, query) {
+    const text = String(value || "");
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedQuery) return escapeHtml(text);
+
+    const lowerText = text.toLowerCase();
+    const lowerQuery = normalizedQuery.toLowerCase();
+    let index = 0;
+    let html = "";
+
+    while (index < text.length) {
+      const hitIndex = lowerText.indexOf(lowerQuery, index);
+      if (hitIndex < 0) {
+        html += escapeHtml(text.slice(index));
+        break;
+      }
+      html += escapeHtml(text.slice(index, hitIndex));
+      html += `<mark class="search-highlight">${escapeHtml(text.slice(hitIndex, hitIndex + normalizedQuery.length))}</mark>`;
+      index = hitIndex + normalizedQuery.length;
+    }
+
+    return html;
+  }
+
+  function highlightRenderedSearchMatches(query, options = {}) {
+    clearSearchHighlights();
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedQuery) return 0;
+
+    const textNodes = collectHighlightableTextNodes(elements.markdownBody);
+    let firstMark = null;
+    let count = 0;
+
+    for (const textNode of textNodes) {
+      const fragment = highlightTextNode(textNode, normalizedQuery);
+      if (!fragment) continue;
+      const marks = Array.from(fragment.querySelectorAll("mark.search-highlight"));
+      if (!firstMark && marks.length) firstMark = marks[0];
+      count += marks.length;
+      textNode.replaceWith(fragment);
+    }
+
+    if (options.scrollToFirst && firstMark) {
+      window.setTimeout(() => {
+        firstMark.scrollIntoView({ block: "center", behavior: "smooth" });
+        updateTopButtonVisibility();
+      }, 40);
+    }
+
+    return count;
+  }
+
+  function collectHighlightableTextNodes(root) {
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest("pre, code, script, style, .mermaid, mark.search-highlight")) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    let node = walker.nextNode();
+    while (node) {
+      nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+
+  function highlightTextNode(textNode, query) {
+    const text = textNode.nodeValue || "";
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    if (!lowerText.includes(lowerQuery)) return null;
+
+    const fragment = document.createDocumentFragment();
+    let index = 0;
+
+    while (index < text.length) {
+      const hitIndex = lowerText.indexOf(lowerQuery, index);
+      if (hitIndex < 0) {
+        fragment.append(document.createTextNode(text.slice(index)));
+        break;
+      }
+      if (hitIndex > index) fragment.append(document.createTextNode(text.slice(index, hitIndex)));
+      const mark = document.createElement("mark");
+      mark.className = "search-highlight";
+      mark.textContent = text.slice(hitIndex, hitIndex + query.length);
+      fragment.append(mark);
+      index = hitIndex + query.length;
+    }
+
+    return fragment;
+  }
+
+  function clearSearchHighlights() {
+    elements.markdownBody.querySelectorAll("mark.search-highlight").forEach((mark) => {
+      mark.replaceWith(document.createTextNode(mark.textContent || ""));
+    });
+    elements.markdownBody.normalize();
   }
 
   function normalizeForSearch(value) {
@@ -1307,7 +1433,7 @@
     return { path: normalizePath(baseParts.join("/")), hash };
   }
 
-  function restoreScrollOrHash() {
+  function restoreScrollOrHash(options = {}) {
     window.setTimeout(() => {
       if (pendingHash) {
         const target = document.getElementById(pendingHash) || document.getElementById(slugifyHeading(decodeHashSafely(pendingHash)));
@@ -1318,7 +1444,7 @@
         }
       }
 
-      elements.contentScroll.scrollTop = 0;
+      if (!options.skipTopReset) elements.contentScroll.scrollTop = 0;
       updateTopButtonVisibility();
     }, 30);
   }
