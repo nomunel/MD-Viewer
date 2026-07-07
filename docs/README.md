@@ -15,6 +15,7 @@ Markdown Viewer は、ローカルフォルダ内の Markdown 文書を読むた
 
 ## 開発ドキュメント
 
+- [開発環境セットアップ](development/setup.md)
 - [要件](development/requirements.md)
 - [仕様](development/specification.md)
 - [ToDo](development/todo.md)
