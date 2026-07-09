@@ -637,8 +637,45 @@
   }
 
   function extractTitleFromMarkdown(markdown) {
-    const match = String(markdown || "").match(/^#\s+(.+?)\s*$/m);
-    return match ? stripInlineMarkdown(match[1]).trim() : "";
+    const lines = normalizeMarkdownSource(markdown).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    let fenceMarker = "";
+
+    for (const line of lines) {
+      const fence = matchFenceLine(line);
+      if (fence) {
+        if (!fenceMarker) {
+          fenceMarker = fence;
+        } else if (fence[0] === fenceMarker[0] && fence.length >= fenceMarker.length) {
+          fenceMarker = "";
+        }
+        continue;
+      }
+
+      if (fenceMarker) continue;
+
+      const heading = matchAtxHeading(line);
+      if (heading && heading.level === 1) return stripInlineMarkdown(heading.text).trim();
+    }
+
+    return "";
+  }
+
+  function normalizeMarkdownSource(value) {
+    return String(value || "").replace(/^\uFEFF/, "");
+  }
+
+  function matchAtxHeading(line) {
+    const match = String(line || "").match(/^\s{0,3}(#{1,6})(?:[ \t]+|$)(.*)$/);
+    if (!match) return null;
+
+    return {
+      level: match[1].length,
+      text: match[2].trim().replace(/[ \t]+#+[ \t]*$/, "").trim()
+    };
+  }
+
+  function matchFenceLine(line) {
+    return String(line || "").match(/^\s{0,3}(```+|~~~+)/)?.[1] || "";
   }
 
   function stripInlineMarkdown(value) {
@@ -1066,7 +1103,7 @@
   }
 
   function renderMarkdown(source) {
-    const lines = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const lines = normalizeMarkdownSource(source).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     let html = "";
     let index = 0;
     let headingCount = 0;
@@ -1098,10 +1135,10 @@
         continue;
       }
 
-      const heading = line.match(/^(#{1,6})\s+(.+)$/);
+      const heading = matchAtxHeading(line);
       if (heading) {
-        const level = heading[1].length;
-        const text = heading[2].trim();
+        const level = heading.level;
+        const text = heading.text;
         const id = slugifyHeading(text) || `heading-${++headingCount}`;
         html += `<h${level} id="${escapeAttr(id)}">${parseInline(text)}</h${level}>`;
         index++;
@@ -1175,7 +1212,7 @@
   function isBlockStart(lines, index) {
     const line = lines[index] || "";
     if (/^\s*$/.test(line)) return true;
-    return /^```/.test(line) || /^(#{1,6})\s+/.test(line) || /^>\s?/.test(line) || isListLine(line) || isTableStart(lines, index) || /^\s*---+\s*$/.test(line);
+    return /^```/.test(line) || Boolean(matchAtxHeading(line)) || /^>\s?/.test(line) || isListLine(line) || isTableStart(lines, index) || /^\s*---+\s*$/.test(line);
   }
 
   function isListLine(line) {
